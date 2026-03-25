@@ -1,41 +1,97 @@
-import SQLite
 import Foundation
+import SQLite
 
-// Connection uses an internal serial queue, so it is safe to mark Sendable.
-extension Connection: @unchecked @retroactive Sendable {}
+let db = try Connection("db.sqlite3")
 
-struct Database {
-    // Definitions for the Table
-    static let tasks = Table("tasks")
-    static let id = Expression<Int64>("id")
-    static let title = Expression<String>("title")
-    static let isCompleted = Expression<Bool>("is_completed")
+let projects = Table("projects")
 
-    static func setup() throws -> Connection {
-        let db = try Connection("db.sqlite3")
-        try db.run(tasks.create(ifNotExists: true) { t in
-            t.column(id, primaryKey: .autoincrement)
-            t.column(title)
-            t.column(isCompleted, defaultValue: false)
-        })
-        return db
+let id = Expression<Int>("id")
+let title = Expression<String>("title")
+let description = Expression<String>("description")
+let goal = Expression<Double>("goal")
+let currentAmount = Expression<Double>("currentAmount")
+
+// MARK: - CREATE TABLE
+func createTable() throws {
+    try db.run(projects.create(ifNotExists: true) { t in
+        t.column(id, primaryKey: .autoincrement)
+        t.column(title)
+        t.column(description)
+        t.column(goal)
+        t.column(currentAmount)
+    })
+}
+
+// MARK: - CREATE
+func addProject(_ p: Project) throws {
+    let insert = projects.insert(
+        title <- p.title,
+        description <- p.description,
+        goal <- p.goal,
+        currentAmount <- p.currentAmount
+    )
+    try db.run(insert)
+}
+
+// MARK: - READ
+func getProjects() throws -> [Project] {
+    var list: [Project] = []
+
+    for p in try db.prepare(projects) {
+        list.append(Project(
+            id: p[id],
+            title: p[title],
+            description: p[description],
+            goal: p[goal],
+            currentAmount: p[currentAmount]
+        ))
     }
 
-    static func fetchAllTasks(db: Connection) throws -> [TaskItem] {
-        return try db.prepare(tasks).map { row in
-            TaskItem(id: row[id], title: row[title], isCompleted: row[isCompleted])
-        }
-    }
+    return list
+}
 
-    static func addTask(db: Connection, title text: String) throws {
-        try db.run(tasks.insert(title <- text))
+// MARK: - UPDATE
+func updateProject(_ p: Project) throws {
+    guard let pid = p.id else { return }
+
+    let project = projects.filter(id == pid)
+
+    try db.run(project.update(
+        title <- p.title,
+        description <- p.description,
+        goal <- p.goal,
+        currentAmount <- p.currentAmount
+    ))
+}
+
+// MARK: - DELETE
+func deleteProject(_ pid: Int) throws {
+    let project = projects.filter(id == pid)
+    try db.run(project.delete())
+}
+
+// MARK: - DONATE (BONUS)
+func donate(_ pid: Int, amount: Double) throws {
+    let project = projects.filter(id == pid)
+
+    if let p = try db.pluck(project) {
+        let newAmount = p[currentAmount] + amount
+        try db.run(project.update(currentAmount <- newAmount))
     }
-    
-    static func toggleTask(db: Connection, id targetId: Int64) throws {
-        let task = tasks.filter(id == targetId)
-        // Find current state to flip it
-        if let current = try db.pluck(task) {
-            try db.run(task.update(isCompleted <- !current[isCompleted]))
-        }
+}
+
+// MARK: - GET BY ID (BONUS)
+func getProjectById(_ pid: Int) throws -> Project? {
+    let project = projects.filter(id == pid)
+
+    if let p = try db.pluck(project) {
+        return Project(
+            id: p[id],
+            title: p[title],
+            description: p[description],
+            goal: p[goal],
+            currentAmount: p[currentAmount]
+        )
     }
+    return nil
 }
