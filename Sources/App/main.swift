@@ -1,46 +1,53 @@
-import Foundation
 import Hummingbird
-@preconcurrency import SQLite
 
-// Setup SQLite Database
-let db = try Database.setup()
+let app = Application()
 
-// Setup Web Server (Hummingbird)
-let router = Router()
+try createTable()
 
-// Root Page
-router.get("/") { _, _ -> HTML in
-    let allTasks = try Database.fetchAllTasks(db: db)
-    return Views.renderIndex(items: allTasks)
+// HOME
+app.get("/") { req async throws -> Response in
+    let projects = try getProjects()
+    return Response(html: renderHome(projects))
 }
 
-// API: Add Task (form submits application/x-www-form-urlencoded, not JSON)
-router.post("/add") { request, _ -> Response in
-    let buffer = try await request.body.collect(upTo: 1024 * 16)
-    let bodyString = String(buffer: buffer)
-    var components = URLComponents()
-    components.percentEncodedQuery = bodyString
-    let title = components.queryItems?.first(where: { $0.name == "title" })?.value ?? ""
-    guard !title.isEmpty else {
-        return Response(status: .badRequest)
-    }
-    try Database.addTask(db: db, title: title)
-    return Response(status: .seeOther, headers: [.location: "/"])
+// CREATE
+app.post("/add") { req async throws -> Response in
+    let p = try req.decode(as: Project.self)
+    try addProject(p)
+    return Response.redirect(to: "/")
 }
 
-// API: Toggle Task
-router.post("/toggle/:id") { _, context -> Response in
-    guard let idStr = context.parameters.get("id"), let targetId = Int64(idStr) else {
-        return Response(status: .badRequest)
-    }
-    try Database.toggleTask(db: db, id: targetId)
-    return Response(status: .seeOther, headers: [.location: "/"])
+// UPDATE
+app.post("/update/:id") { req async throws -> Response in
+    let id = req.parameters.get("id", as: Int.self)!
+    var p = try req.decode(as: Project.self)
+    p.id = id
+
+    try updateProject(p)
+    return Response.redirect(to: "/")
 }
 
-let app = Application(
-    router: router,
-    configuration: .init(address: .hostname("0.0.0.0", port: 8080))
-)
+// DELETE
+app.post("/delete/:id") { req async throws -> Response in
+    let id = req.parameters.get("id", as: Int.self)!
+    try deleteProject(id)
+    return Response.redirect(to: "/")
+}
 
-print("🚀 Server started at http://localhost:8080")
-try await app.runService()
+// DONATE
+app.post("/donate/:id") { req async throws -> Response in
+    let id = req.parameters.get("id", as: Int.self)!
+    let amount = try req.query.get("amount", as: Double.self)
+
+    try donate(id, amount: amount)
+    return Response.redirect(to: "/")
+}
+
+app.get("/project/:id") { req async throws -> Response in
+    let id = req.parameters.get("id", as: Int.self)!
+    let project = try getProjectById(id)
+
+    return Response(html: renderDetail(project!))
+}
+
+try app.start()
